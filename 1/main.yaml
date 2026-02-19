@@ -1,0 +1,98 @@
+- name: prepare primary postgresql host
+  hosts: primary
+  become: yes
+  vars:
+    postgres_packages:
+      - postgresql-16
+      - postgresql-client-16
+      - postgresql-contrib-16
+
+  tasks:
+    - name: update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: install basic dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - gnupg2
+          - lsb-release
+          - python3
+          - python3-pip
+          - python3-dev
+          - python3-venv
+          - python3-full
+          - build-essential
+          - libpq5
+          - postgresql-common  # Добавляем для управления репозиториями
+        state: present
+        update_cache: yes
+
+    - name: add postgresql apt key
+      ansible.builtin.get_url:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        dest: /tmp/ACCC4CF8.asc
+        mode: '0644'
+
+    - name: convert gpg key to keyring
+      ansible.builtin.command:
+        cmd: gpg --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/ACCC4CF8.asc
+      args:
+        creates: /usr/share/keyrings/postgresql.gpg
+
+    - name: get Ubuntu release name
+      ansible.builtin.command: lsb_release -cs
+      register: ubuntu_release
+      changed_when: false
+
+    - name: add postgresql repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pgdg.list
+        mode: '0644'
+        content: |
+          deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt {{ ubuntu_release.stdout }}-pgdg main
+
+    - name: update apt cache with postgresql repo
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: install postgresql
+      ansible.builtin.apt:
+        name: "{{ postgres_packages }}"
+        state: present
+        update_cache: yes
+
+    - name: create virtual environment for psycopg2
+      ansible.builtin.pip:
+        name:
+          - psycopg2-binary
+          - setuptools
+          - wheel
+        virtualenv: /opt/ansible-venv
+        virtualenv_command: python3 -m venv
+      become: yes
+
+    - name: create pg_data directory
+      ansible.builtin.file:
+        path: /pg_data
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0700'
+
+    - name: stop postgresql service
+      ansible.builtin.systemd:
+        name: postgresql
+        state: stopped
+        enabled: yes
+
+    - name: drop default cluster if exists
+      ansible.builtin.command:
+        cmd: pg_dropcluster --stop 16 main
+      register: drop_cluster
+      changed_when: drop_cluster.rc == 0
+      failed_when: false
+      ignore_errors: yes
