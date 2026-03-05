@@ -1,0 +1,16 @@
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+shared_buffers = 256MB
+wal_level = logical
+max_wal_senders = 10
+wal_keep_size = 1GB
+max_replication_slots = 10
+logging_collector = on
+log_directory = 'log'
+log_statement = 'all'
+log_min_duration_statement = 0
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.max = 10000
+pg_stat_statements.track = all
+data_directory = '/pg_data/16'

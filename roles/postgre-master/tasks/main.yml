@@ -1,0 +1,163 @@
+---
+- name: Установка PostgreSQL
+  apt:
+    name:
+      - postgresql-16
+      - postgresql-contrib-16
+    state: present
+    update_cache: true
+  become: true
+
+- name: Установка Python библиотеки psycopg2
+  apt:
+    name:
+      - python3-psycopg2
+    state: present
+  become: true
+
+- name: Остановка PostgreSQL
+  systemd:
+    name: postgresql
+    state: stopped
+  become: true
+  ignore_errors: true
+
+- name: Создание директории для данных
+  file:
+    path: /pg_data/16
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  become: true
+
+- name: Инициализация кластера
+  command:
+    cmd: /usr/lib/postgresql/16/bin/initdb -D /pg_data/16 -U postgres
+  args:
+    creates: /pg_data/16/PG_VERSION
+  become: true
+  become_user: postgres
+
+- name: Копирование конфигурации postgresql.conf
+  template:
+    src: postgresql.conf.j2
+    dest: /pg_data/16/postgresql.conf
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  become: true
+
+- name: Убеждаемся, что pg_stat_statements прописан в конфиге
+  lineinfile:
+    path: /pg_data/16/postgresql.conf
+    line: "shared_preload_libraries = 'pg_stat_statements'"
+    regexp: '^#?shared_preload_libraries\s*='
+    state: present
+    backup: yes
+  become: true
+
+- name: Копирование pg_hba.conf
+  template:
+    src: pg_hba.conf.j2
+    dest: /pg_data/16/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  become: true
+
+- name: ПЕРВЫЙ ЗАПУСК PostgreSQL (с загруженной библиотекой)
+  systemd:
+    name: postgresql
+    state: started
+    enabled: true
+  become: true
+
+- name: Создание пользователя pgbench
+  postgresql_user:
+    name: pgbench
+    password: "12345678"
+    role_attr_flags: LOGIN
+    db: postgres
+  become: true
+  become_user: postgres
+
+- name: Создание базы bench
+  postgresql_db:
+    name: bench
+    owner: pgbench
+  become: true
+  become_user: postgres
+
+- name: Включение pg_stat_statements в postgres
+  postgresql_ext:
+    name: pg_stat_statements
+    db: postgres
+  become: true
+  become_user: postgres
+
+- name: Включение pg_stat_statements в bench
+  postgresql_ext:
+    name: pg_stat_statements
+    db: bench
+  become: true
+  become_user: postgres
+
+- name: Создание пользователя для репликации
+  postgresql_user:
+    name: pg-replica
+    password: "12345678"
+    role_attr_flags: LOGIN,REPLICATION
+    db: postgres
+  become: true
+  become_user: postgres
+
+- name: Инициализация pgbench
+  command:
+    cmd: pgbench -i -s 50 bench
+  become: true
+  become_user: postgres
+  environment:
+    PGPASSWORD: "12345678"
+
+- name: Запуск pgbench теста
+  command:
+    cmd: pgbench -c 10 -j 2 -t 1000 bench
+  become: true
+  become_user: postgres
+  environment:
+    PGPASSWORD: "12345678"
+  register: pgbench_result
+
+- name: Сохранение результатов
+  copy:
+    content: "{{ pgbench_result.stdout }}"
+    dest: /tmp/pgbench_result.txt
+    mode: '0644'
+  become: true
+  when: pgbench_result.stdout is defined
+
+- name: Получение медленных запросов
+  shell:
+    cmd: |
+      psql -U postgres -d bench -c "
+      SELECT query, mean_exec_time, calls
+      FROM pg_stat_statements
+      ORDER BY mean_exec_time DESC
+      LIMIT 10;" > /tmp/slow_queries.txt
+  become: true
+  become_user: postgres
+  changed_when: false
+
+- name: Получение IO запросов
+  shell:
+    cmd: |
+      psql -U postgres -d bench -c "
+      SELECT query, blk_write_time
+      FROM pg_stat_statements
+      WHERE blk_write_time > 0
+      ORDER BY blk_write_time DESC
+      LIMIT 10;" > /tmp/io_queries.txt
+  become: true
+  become_user: postgres
+  changed_when: false

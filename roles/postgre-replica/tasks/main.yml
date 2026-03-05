@@ -1,0 +1,96 @@
+---
+- name: Установка PostgreSQL
+  apt:
+    name:
+      - postgresql-16
+      - postgresql-contrib-16
+    state: present
+    update_cache: true
+  become: true
+
+- name: Остановка PostgreSQL
+  systemd:
+    name: postgresql
+    state: stopped
+  become: true
+  ignore_errors: true
+
+- name: Создание директории для данных
+  file:
+    path: /pg_data/16
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  become: true
+
+- name: Удаление старых данных
+  file:
+    path: /pg_data/16
+    state: absent
+  become: true
+
+- name: Создание чистой директории
+  file:
+    path: /pg_data/16
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  become: true
+
+- name: Выполнение pg_basebackup
+  command:
+    cmd: pg_basebackup -h 192.168.88.162 -U pg-replica -D /pg_data/16 -P -R -X stream
+  become: true
+  become_user: postgres
+  environment:
+    PGPASSWORD: "12345678"
+
+- name: Создание standby сигнала
+  file:
+    path: /pg_data/16/standby.signal
+    state: touch
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  become: true
+
+- name: Запуск PostgreSQL
+  systemd:
+    name: postgresql
+    state: started
+    enabled: true
+  become: true
+
+- name: Создание директории для второго инстанса
+  file:
+    path: /pg_data/16-one-base
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  become: true
+
+- name: Инициализация второго инстанса
+  command:
+    cmd: /usr/lib/postgresql/16/bin/initdb -D /pg_data/16-one-base -U postgres
+  args:
+    creates: /pg_data/16-one-base/PG_VERSION
+  become: true
+  become_user: postgres
+
+- name: Настройка порта для второго инстанса
+  lineinfile:
+    path: /pg_data/16-one-base/postgresql.conf
+    line: "port = 5433"
+    create: true
+  become: true
+  become_user: postgres
+
+- name: Запуск второго инстанса
+  shell:
+    cmd: /usr/lib/postgresql/16/bin/pg_ctl -D /pg_data/16-one-base start
+  become: true
+  become_user: postgres
+  ignore_errors: true

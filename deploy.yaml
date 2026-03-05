@@ -1,0 +1,17 @@
+- name: playbook-master
+  hosts: master
+  become: true
+  become_user: root
+  become_method: sudo
+  gather_facts: true
+  roles:
+    - postgre-master
+
+- name: playbook-replica
+  hosts: replica
+  become: true
+  become_user: root
+  become_method: sudo
+  gather_facts: true
+  roles:
+    - postgre-replica
