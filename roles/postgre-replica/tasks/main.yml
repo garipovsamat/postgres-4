@@ -1,96 +1,93 @@
----
-- name: Установка PostgreSQL
+- name: Update package list
   apt:
-    name:
-      - postgresql-16
-      - postgresql-contrib-16
-    state: present
     update_cache: true
   become: true
 
-- name: Остановка PostgreSQL
+- name: Install PostgreSQL 16
+  apt:
+    name:
+      - postgresql-16
+      - postgresql-client-16
+      - postgresql-contrib
+    state: present
+  become: true
+
+- name: Stop PostgreSQL
   systemd:
     name: postgresql
     state: stopped
   become: true
   ignore_errors: true
 
-- name: Создание директории для данных
+- name: Remove old data
   file:
-    path: /pg_data/16
-    state: directory
-    owner: postgres
-    group: postgres
-    mode: '0750'
-  become: true
-
-- name: Удаление старых данных
-  file:
-    path: /pg_data/16
+    path: "{{ data_root }}"
     state: absent
   become: true
 
-- name: Создание чистой директории
+- name: Create fresh data dir
   file:
-    path: /pg_data/16
+    path: "{{ data_root }}"
     state: directory
-    owner: postgres
-    group: postgres
-    mode: '0750'
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: '0700'
   become: true
 
-- name: Выполнение pg_basebackup
+- name: Run pg_basebackup from master
   command:
-    cmd: pg_basebackup -h 192.168.88.162 -U pg-replica -D /pg_data/16 -P -R -X stream
+    cmd: >
+      pg_basebackup -h 192.168.88.162 -U "{{ replica_user }}"
+      -D "{{ data_root }}" -P -R -X stream
+  become_user: "{{ pg_user }}"
   become: true
-  become_user: postgres
   environment:
     PGPASSWORD: "12345678"
 
-- name: Создание standby сигнала
+- name: Create standby signal
   file:
-    path: /pg_data/16/standby.signal
+    path: "{{ data_root }}/standby.signal"
     state: touch
-    owner: postgres
-    group: postgres
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
     mode: '0600'
   become: true
 
-- name: Запуск PostgreSQL
+- name: Start PostgreSQL
   systemd:
     name: postgresql
     state: started
     enabled: true
   become: true
 
-- name: Создание директории для второго инстанса
+- name: Create directory for logical replication instance
   file:
-    path: /pg_data/16-one-base
+    path: "/pg_data/16-one-base"
     state: directory
-    owner: postgres
-    group: postgres
-    mode: '0750'
+    owner: "{{ pg_user }}"
+    group: "{{ pg_group }}"
+    mode: '0700'
   become: true
 
-- name: Инициализация второго инстанса
+- name: Initialize logical instance
   command:
     cmd: /usr/lib/postgresql/16/bin/initdb -D /pg_data/16-one-base -U postgres
-  args:
-    creates: /pg_data/16-one-base/PG_VERSION
+  become_user: "{{ pg_user }}"
   become: true
-  become_user: postgres
+  args:
+    creates: "/pg_data/16-one-base/PG_VERSION"
 
-- name: Настройка порта для второго инстанса
+- name: Set port for logical instance
   lineinfile:
     path: /pg_data/16-one-base/postgresql.conf
     line: "port = 5433"
     create: true
   become: true
-  become_user: postgres
+  become_user: "{{ pg_user }}"
 
-- name: Запуск второго инстанса
-  shell:
-    cmd: /usr/lib/postgresql/16/bin/pg_ctl -D /pg_data/16-one-base start
+- name: Start logical instance
+  shell: |
+    /usr/lib/postgresql/16/bin/pg_ctl -D /pg_data/16-one-base start
+  become_user: "{{ pg_user }}"
   become: true
-  become_user: postgres
   ignore_errors: true
